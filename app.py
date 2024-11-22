@@ -5,6 +5,10 @@ from torchvision.transforms import functional as F
 from PIL import Image
 import io
 import numpy as np
+import zipfile
+import os
+import tempfile
+from datetime import datetime
 
 def apply_sepia(img):
     img_array = np.array(img)
@@ -41,6 +45,31 @@ def get_transforms(params):
         
     return T.Compose(transforms)
 
+def create_zip_file(images, original_filename):
+    # Create a temporary directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Get timestamp for unique zip name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"augmented_images_{timestamp}.zip"
+        zip_path = os.path.join(temp_dir, zip_filename)
+        
+        # Create ZIP file
+        with zipfile.ZipFile(zip_path, 'w') as zip_file:
+            # Save original image
+            original_name = f"original_{original_filename}"
+            images['original'][0].save(os.path.join(temp_dir, original_name))
+            zip_file.write(os.path.join(temp_dir, original_name), original_name)
+            
+            # Save augmented images
+            for idx, img in enumerate(images['augmented']):
+                filename = f"augmented_{idx+1}_{original_filename}"
+                img.save(os.path.join(temp_dir, filename))
+                zip_file.write(os.path.join(temp_dir, filename), filename)
+        
+        # Read the ZIP file
+        with open(zip_path, 'rb') as f:
+            return f.read(), zip_filename
+
 def main():
     st.title("Image Data Augmentation App")
     st.write("Upload an image and generate augmented versions!")
@@ -52,6 +81,9 @@ def main():
         # Read image
         image = Image.open(uploaded_file).convert('RGB')
         st.image(image, caption="Original Image", use_column_width=True)
+        
+        # Store original filename
+        original_filename = uploaded_file.name
         
         # Augmentation parameters
         st.sidebar.header("Augmentation Parameters")
@@ -91,6 +123,12 @@ def main():
             
             transforms = get_transforms(params)
             
+            # Store generated images
+            generated_images = {
+                'original': [image],
+                'augmented': []
+            }
+            
             cols = st.columns(3)
             for idx in range(num_augmentations):
                 augmented_img = transforms(image)
@@ -102,8 +140,20 @@ def main():
                 if sepia:
                     augmented_img = apply_sepia(augmented_img)
                 
+                # Store the augmented image
+                generated_images['augmented'].append(augmented_img)
+                
                 col_idx = idx % 3
                 cols[col_idx].image(augmented_img, caption=f"Augmentation {idx+1}", use_column_width=True)
+            
+            # Create download button for ZIP file
+            zip_data, zip_filename = create_zip_file(generated_images, original_filename)
+            st.download_button(
+                label="Download all images as ZIP",
+                data=zip_data,
+                file_name=zip_filename,
+                mime="application/zip"
+            )
 
 if __name__ == "__main__":
     main()
