@@ -45,7 +45,7 @@ def get_transforms(params):
         
     return T.Compose(transforms)
 
-def create_zip_file(images, original_filename):
+def create_zip_file(all_images):
     # Create a temporary directory
     with tempfile.TemporaryDirectory() as temp_dir:
         # Get timestamp for unique zip name
@@ -55,39 +55,68 @@ def create_zip_file(images, original_filename):
         
         # Create ZIP file
         with zipfile.ZipFile(zip_path, 'w') as zip_file:
-            # Save original image
-            original_name = f"original_{original_filename}"
-            images['original'][0].save(os.path.join(temp_dir, original_name))
-            zip_file.write(os.path.join(temp_dir, original_name), original_name)
-            
-            # Save augmented images
-            for idx, img in enumerate(images['augmented']):
-                filename = f"augmented_{idx+1}_{original_filename}"
-                img.save(os.path.join(temp_dir, filename))
-                zip_file.write(os.path.join(temp_dir, filename), filename)
+            # Process each original image and its augmentations
+            for img_idx, (original_filename, images) in enumerate(all_images.items()):
+                # Create a directory for each original image
+                base_dir = f"image_{img_idx + 1}_{os.path.splitext(original_filename)[0]}"
+                full_base_dir = os.path.join(temp_dir, base_dir)
+                os.makedirs(full_base_dir, exist_ok=True)
+                
+                # Save original image
+                original_name = os.path.join(base_dir, f"original_{original_filename}")
+                original_path = os.path.join(temp_dir, original_name)
+                images['original'][0].save(original_path)
+                zip_file.write(original_path, original_name)
+                
+                # Save augmented images
+                for aug_idx, img in enumerate(images['augmented']):
+                    aug_name = os.path.join(base_dir, f"augmented_{aug_idx+1}_{original_filename}")
+                    aug_path = os.path.join(temp_dir, aug_name)
+                    img.save(aug_path)
+                    zip_file.write(aug_path, aug_name)
         
         # Read the ZIP file
         with open(zip_path, 'rb') as f:
             return f.read(), zip_filename
 
-def main():
-    st.title("Image Data Augmentation App")
-    st.write("Upload an image and generate augmented versions!")
-
-    # File uploader
-    uploaded_file = st.file_uploader("Choose an image file", type=['png', 'jpg', 'jpeg'])
+def process_image(image, params, num_augmentations):
+    transforms = get_transforms(params)
+    augmented_images = []
     
-    if uploaded_file is not None:
-        # Read image
-        image = Image.open(uploaded_file).convert('RGB')
-        st.image(image, caption="Original Image", use_column_width=True)
+    for _ in range(num_augmentations):
+        augmented_img = transforms(image)
         
-        # Store original filename
-        original_filename = uploaded_file.name
+        if params['grayscale']:
+            augmented_img = F.rgb_to_grayscale(F.to_tensor(augmented_img), 3)
+            augmented_img = F.to_pil_image(augmented_img)
+        
+        if params['sepia']:
+            augmented_img = apply_sepia(augmented_img)
+        
+        augmented_images.append(augmented_img)
+    
+    return augmented_images
+
+def main():
+    st.title("Multi-Image Data Augmentation App")
+    st.write("Upload multiple images and generate augmented versions for all of them!")
+
+    # File uploader for multiple files
+    uploaded_files = st.file_uploader("Choose image files", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+    
+    if uploaded_files:
+        # Show number of uploaded images
+        st.write(f"📁 {len(uploaded_files)} images uploaded")
+        
+        # Display original images in a grid
+        cols_original = st.columns(min(3, len(uploaded_files)))
+        for idx, uploaded_file in enumerate(uploaded_files):
+            image = Image.open(uploaded_file).convert('RGB')
+            cols_original[idx % 3].image(image, caption=f"Original: {uploaded_file.name}", use_column_width=True)
         
         # Augmentation parameters
         st.sidebar.header("Augmentation Parameters")
-        num_augmentations = st.sidebar.slider("Number of augmentations to generate", 1, 10, 3)
+        num_augmentations = st.sidebar.slider("Number of augmentations per image", 1, 10, 3)
         
         # Transform options
         rotate = st.sidebar.checkbox("Enable rotation", True)
@@ -96,8 +125,6 @@ def main():
         flip = st.sidebar.checkbox("Enable random flip", True)
         
         crop = st.sidebar.checkbox("Enable random crop", True)
-        crop_height = st.sidebar.number_input("Crop height", min_value=10, value=image.size[1])
-        crop_width = st.sidebar.number_input("Crop width", min_value=10, value=image.size[0])
         
         color_jitter = st.sidebar.checkbox("Enable color jitter", True)
         brightness = st.sidebar.slider("Brightness variation", 0.0, 1.0, 0.2)
@@ -107,53 +134,70 @@ def main():
         grayscale = st.sidebar.checkbox("Convert to grayscale")
         sepia = st.sidebar.checkbox("Apply sepia filter")
         
-        if st.button("Generate Augmentations"):
-            params = {
-                'rotate': rotate,
-                'rotation_degrees': rotation_degrees,
-                'flip': flip,
-                'crop': crop,
-                'crop_height': crop_height,
-                'crop_width': crop_width,
-                'color_jitter': color_jitter,
-                'brightness': brightness,
-                'contrast': contrast,
-                'saturation': saturation
-            }
+        if st.button("Generate Augmentations for All Images"):
+            # Dictionary to store all generated images
+            all_generated_images = {}
             
-            transforms = get_transforms(params)
+            # Progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            # Store generated images
-            generated_images = {
-                'original': [image],
-                'augmented': []
-            }
-            
-            cols = st.columns(3)
-            for idx in range(num_augmentations):
-                augmented_img = transforms(image)
+            try:
+                # Process each image
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    status_text.text(f"Processing image {idx + 1} of {len(uploaded_files)}: {uploaded_file.name}")
+                    
+                    image = Image.open(uploaded_file).convert('RGB')
+                    crop_height = image.size[1]
+                    crop_width = image.size[0]
+                    
+                    params = {
+                        'rotate': rotate,
+                        'rotation_degrees': rotation_degrees,
+                        'flip': flip,
+                        'crop': crop,
+                        'crop_height': crop_height,
+                        'crop_width': crop_width,
+                        'color_jitter': color_jitter,
+                        'brightness': brightness,
+                        'contrast': contrast,
+                        'saturation': saturation,
+                        'grayscale': grayscale,
+                        'sepia': sepia
+                    }
+                    
+                    # Process the image
+                    augmented_images = process_image(image, params, num_augmentations)
+                    
+                    # Store results
+                    all_generated_images[uploaded_file.name] = {
+                        'original': [image],
+                        'augmented': augmented_images
+                    }
+                    
+                    # Display augmentations for this image
+                    st.subheader(f"Augmentations for {uploaded_file.name}")
+                    cols = st.columns(3)
+                    for aug_idx, aug_img in enumerate(augmented_images):
+                        cols[aug_idx % 3].image(aug_img, caption=f"Augmentation {aug_idx+1}", use_column_width=True)
+                    
+                    # Update progress
+                    progress_bar.progress((idx + 1) / len(uploaded_files))
                 
-                if grayscale:
-                    augmented_img = F.rgb_to_grayscale(F.to_tensor(augmented_img), 3)
-                    augmented_img = F.to_pil_image(augmented_img)
+                status_text.text("Processing complete! You can now download all images.")
                 
-                if sepia:
-                    augmented_img = apply_sepia(augmented_img)
+                # Create download button for ZIP file
+                zip_data, zip_filename = create_zip_file(all_generated_images)
+                st.download_button(
+                    label="Download all augmented images as ZIP",
+                    data=zip_data,
+                    file_name=zip_filename,
+                    mime="application/zip"
+                )
                 
-                # Store the augmented image
-                generated_images['augmented'].append(augmented_img)
-                
-                col_idx = idx % 3
-                cols[col_idx].image(augmented_img, caption=f"Augmentation {idx+1}", use_column_width=True)
-            
-            # Create download button for ZIP file
-            zip_data, zip_filename = create_zip_file(generated_images, original_filename)
-            st.download_button(
-                label="Download all images as ZIP",
-                data=zip_data,
-                file_name=zip_filename,
-                mime="application/zip"
-            )
+            except Exception as e:
+                st.error(f"An error occurred: {str(e)}")
+                status_text.text("Processing failed. Please try again.")
 
 if __name__ == "__main__":
     main()
