@@ -7,6 +7,9 @@ A powerful and user-friendly Streamlit application for performing various image 
 ![PyTorch](https://img.shields.io/badge/PyTorch-1.8+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
+- **Hosting Link**:
+  - Verify that the hosting link (`https://data-image-augmentation.streamlit.app/`) is correct and active.
+
 ## ✨ Features
 
 - **Multiple Image Processing**: Upload and process multiple images simultaneously
