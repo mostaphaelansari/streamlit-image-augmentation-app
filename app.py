@@ -1,121 +1,109 @@
 import streamlit as st
-import numpy as np
+import torch
+import torchvision.transforms as T
+from torchvision.transforms import functional as F
 from PIL import Image
 import io
-import zipfile
-import albumentations as A
-import cv2
-import base64
-from io import BytesIO
-import os
-import tempfile
+import numpy as np
 
-def get_augmentation_pipeline():
-    """Define the augmentation pipeline"""
-    return A.Compose([
-        A.RandomRotate90(p=0.5),
-        A.Flip(p=0.5),
-        A.Transpose(p=0.5),
-        A.OneOf([
-            A.IAAAdditiveGaussianNoise(),
-            A.GaussNoise(),
-        ], p=0.2),
-        A.OneOf([
-            A.MotionBlur(p=0.2),
-            A.MedianBlur(blur_limit=3, p=0.1),
-            A.Blur(blur_limit=3, p=0.1),
-        ], p=0.2),
-        A.OneOf([
-            A.OpticalDistortion(p=0.3),
-            A.GridDistortion(p=0.1),
-            A.IAAPiecewiseAffine(p=0.3),
-        ], p=0.2),
-        A.OneOf([
-            A.CLAHE(clip_limit=2),
-            A.IAASharpen(),
-            A.IAAEmboss(),
-            A.RandomBrightnessContrast(),
-        ], p=0.3),
-        A.HueSaturationValue(p=0.3),
+def apply_sepia(img):
+    img_array = np.array(img)
+    sepia_matrix = np.array([
+        [0.393, 0.769, 0.189],
+        [0.349, 0.686, 0.168],
+        [0.272, 0.534, 0.131]
     ])
+    sepia_img = img_array.dot(sepia_matrix.T)
+    sepia_img[np.where(sepia_img > 255)] = 255
+    return Image.fromarray(sepia_img.astype(np.uint8))
 
-def augment_image(image, pipeline):
-    """Apply augmentation to a single image"""
-    augmented = pipeline(image=np.array(image))
-    return Image.fromarray(augmented['image'])
-
-def create_download_link(img, filename):
-    """Create a download link for a single image"""
-    buffered = BytesIO()
-    img.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
-    href = f'<a href="data:file/png;base64,{img_str}" download="{filename}">Download {filename}</a>'
-    return href
+def get_transforms(params):
+    transforms = []
+    
+    if params['rotate']:
+        transforms.append(T.RandomRotation(params['rotation_degrees']))
+    
+    if params['flip']:
+        transforms.append(T.RandomHorizontalFlip(p=1.0))
+    
+    if params['crop']:
+        transforms.append(T.RandomResizedCrop(
+            size=(params['crop_height'], params['crop_width']),
+            scale=(0.8, 1.0)
+        ))
+    
+    if params['color_jitter']:
+        transforms.append(T.ColorJitter(
+            brightness=params['brightness'],
+            contrast=params['contrast'],
+            saturation=params['saturation']
+        ))
+        
+    return T.Compose(transforms)
 
 def main():
-    st.title("Image Augmentation App")
-    st.write("Upload images or a ZIP file to apply augmentations")
-
-    # Sidebar controls
-    st.sidebar.header("Augmentation Settings")
-    num_augmentations = st.sidebar.slider("Number of augmentations per image", 1, 10, 3)
+    st.title("Image Data Augmentation App")
+    st.write("Upload an image and generate augmented versions!")
 
     # File uploader
-    uploaded_file = st.file_uploader("Choose files", type=['png', 'jpg', 'jpeg', 'zip'], accept_multiple_files=False)
-
+    uploaded_file = st.file_uploader("Choose an image file", type=['png', 'jpg', 'jpeg'])
+    
     if uploaded_file is not None:
-        # Create augmentation pipeline
-        pipeline = get_augmentation_pipeline()
-
-        if uploaded_file.type == "application/zip":
-            # Handle ZIP file
-            with zipfile.ZipFile(uploaded_file) as zip_file:
-                # Create a temporary directory to store augmented images
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    augmented_images = []
-                    
-                    # Process each image in the ZIP file
-                    for filename in zip_file.namelist():
-                        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                            with zip_file.open(filename) as file:
-                                img = Image.open(io.BytesIO(file.read())).convert('RGB')
-                                
-                                # Create augmentations
-                                for i in range(num_augmentations):
-                                    aug_img = augment_image(img, pipeline)
-                                    aug_filename = f"aug_{i}_{filename}"
-                                    aug_path = os.path.join(temp_dir, aug_filename)
-                                    aug_img.save(aug_path)
-                                    augmented_images.append(aug_path)
-                    
-                    # Create a ZIP file with augmented images
-                    memory_file = BytesIO()
-                    with zipfile.ZipFile(memory_file, 'w') as zf:
-                        for aug_path in augmented_images:
-                            zf.write(aug_path, os.path.basename(aug_path))
-                    
-                    # Create download button for ZIP
-                    st.download_button(
-                        label="Download Augmented Images (ZIP)",
-                        data=memory_file.getvalue(),
-                        file_name="augmented_images.zip",
-                        mime="application/zip"
-                    )
-        else:
-            # Handle single image
-            image = Image.open(uploaded_file).convert('RGB')
-            st.image(image, caption="Original Image", use_column_width=True)
+        # Read image
+        image = Image.open(uploaded_file).convert('RGB')
+        st.image(image, caption="Original Image", use_column_width=True)
+        
+        # Augmentation parameters
+        st.sidebar.header("Augmentation Parameters")
+        num_augmentations = st.sidebar.slider("Number of augmentations to generate", 1, 10, 3)
+        
+        # Transform options
+        rotate = st.sidebar.checkbox("Enable rotation", True)
+        rotation_degrees = st.sidebar.slider("Max rotation degrees", 0, 180, 30)
+        
+        flip = st.sidebar.checkbox("Enable random flip", True)
+        
+        crop = st.sidebar.checkbox("Enable random crop", True)
+        crop_height = st.sidebar.number_input("Crop height", min_value=10, value=image.size[1])
+        crop_width = st.sidebar.number_input("Crop width", min_value=10, value=image.size[0])
+        
+        color_jitter = st.sidebar.checkbox("Enable color jitter", True)
+        brightness = st.sidebar.slider("Brightness variation", 0.0, 1.0, 0.2)
+        contrast = st.sidebar.slider("Contrast variation", 0.0, 1.0, 0.2)
+        saturation = st.sidebar.slider("Saturation variation", 0.0, 1.0, 0.2)
+        
+        grayscale = st.sidebar.checkbox("Convert to grayscale")
+        sepia = st.sidebar.checkbox("Apply sepia filter")
+        
+        if st.button("Generate Augmentations"):
+            params = {
+                'rotate': rotate,
+                'rotation_degrees': rotation_degrees,
+                'flip': flip,
+                'crop': crop,
+                'crop_height': crop_height,
+                'crop_width': crop_width,
+                'color_jitter': color_jitter,
+                'brightness': brightness,
+                'contrast': contrast,
+                'saturation': saturation
+            }
             
-            # Create and display augmentations
-            st.write("Augmented Images:")
+            transforms = get_transforms(params)
+            
             cols = st.columns(3)
-            for i in range(num_augmentations):
-                aug_img = augment_image(image, pipeline)
-                cols[i % 3].image(aug_img, caption=f"Augmentation {i+1}", use_column_width=True)
+            for idx in range(num_augmentations):
+                augmented_img = transforms(image)
                 
-                # Create download link for each augmented image
-                filename = f"augmented_{i+1}.png"
-                cols[i % 3].markdown(create_download_link(aug_img, filename), unsafe_allow_html=True)
+                if grayscale:
+                    augmented_img = F.rgb_to_grayscale(F.to_tensor(augmented_img), 3)
+                    augmented_img = F.to_pil_image(augmented_img)
+                
+                if sepia:
+                    augmented_img = apply_sepia(augmented_img)
+                
+                col_idx = idx % 3
+                cols[col_idx].image(augmented_img, caption=f"Augmentation {idx+1}", use_column_width=True)
 
 if __name__ == "__main__":
     main()
