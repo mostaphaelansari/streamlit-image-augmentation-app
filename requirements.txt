@@ -5,3 +5,5 @@ numpy
 matplotlib
 requests
 opencv-python
+streamlit
+albumentations
