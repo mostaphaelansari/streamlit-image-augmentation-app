@@ -135,7 +135,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact
 
-- Your Name - [your.email@example.com]
+- EL ANSARI Mostapha - [elansarimostapha011@gmail.com]
 - Project Link: [https://github.com/yourusername/image-augmentation-app](https://github.com/yourusername/image-augmentation-app)
 
 ---
